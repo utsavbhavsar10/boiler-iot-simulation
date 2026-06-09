@@ -1,0 +1,16 @@
+services:
+  emqx:
+    image: emqx/emqx:latest #which prebuilt image to download
+    container_name: emqx_broker
+    ports: 
+      - "1883:1883"   #MQTT(Python scripts use this port to connect to the broker)
+      - "8083:8083"   # MQTT over WebSocket (browsers)
+      - "18083:18083" # EMQX's own admin web UI
+    environment:
+     - EMQX_ALLOW_ANONYMOUS=true # no username/password in dev
+    volumes:
+     - emqx_data:/opt/emqx/data # persist data across restarts
+    restart: unless-stopped
+
+volumes:
+  emqx_data:
