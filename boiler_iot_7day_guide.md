@@ -367,14 +367,14 @@ By end of Day 2 you will have:
 A real industrial boiler has these sensors:
 
 ```
-BOILER SENSORS                    CHIMNEY SENSORS
-──────────────────────────────    ──────────────────────────────
-Steam Pressure     → 10-14 bar    Flue Gas Temp     → 150-250°C
-Water Temperature  → 60-100°C    CO2 Percentage    → 8-14%
-Fuel Flow Rate     → 5-20 L/min  O2 Percentage     → 3-8%
-Air Flow Rate      → 100-300 m/h CO (Carbon Mono)  → 0-50 ppm
-Drum Water Level   → 40-60%      Draft Pressure    → -2 to -5 Pa
-Burner State       → ON/OFF       Stack Velocity    → 3-8 m/s
+BOILER SENSORS                      CHIMNEY SENSORS
+──────────────────────────────      ──────────────────────────────
+Steam Pressure     → 10-14 bar      Flue Gas Temp     → 150-250°C
+Water Temperature  → 60-100°C       CO2 Percentage    → 8-14%
+Fuel Flow Rate     → 5-20 L/min     O2 Percentage     → 3-8%
+Air Flow Rate      → 100-300 m/h    CO (Carbon Mono)  → 0-50 ppm
+Drum Water Level   → 40-60%         Draft Pressure    → -2 to -5 Pa
+Burner State       → ON/OFF         Stack Velocity    → 3-8 m/s
 Feed Water Flow    → 5-20 L/min
 ```
 
@@ -405,55 +405,86 @@ BROKER_PORT = 1883
 CLIENT_ID = "boiler_simulator"
 
 # ─── TOPIC DEFINITIONS ──────────────────────────────────────────
+# 19 real-world parameters from a power-plant boiler + turbine.
+# Boiler-side sensors go under boiler/..., turbine-side under turbine/...
 TOPICS = {
-    "temperature":    "boiler/temperature",
-    "pressure":       "boiler/pressure",
-    "fuel_flow":      "boiler/fuel_flow",
-    "air_flow":       "boiler/air_flow",
-    "water_level":    "boiler/water_level",
-    "burner_state":   "boiler/burner_state",
-    "feed_water":     "boiler/feed_water_flow",
-    "status":         "boiler/status",
-    "fault":          "system/faults",
+    # Boiler side
+    "main_steam_flow":               "boiler/main_steam_flow",
+    "main_steam_temp_boiler":        "boiler/main_steam_temp",
+    "main_steam_pressure_boiler":    "boiler/main_steam_pressure",
+    "reheat_steam_temp_boiler":      "boiler/reheat_steam_temp",
+    "superheater_desup_flow":        "boiler/superheater_desup_water_flow",
+    "reheater_desup_flow":           "boiler/reheater_desup_water_flow",
+    "feedwater_temp":                "boiler/feedwater_temp",
+    "feedwater_flow":                "boiler/feedwater_flow",
+    "feedwater_pressure":            "boiler/feedwater_pressure",
+    "flue_gas_temp":                 "boiler/flue_gas_temp",
+    "oxygen_level":                  "boiler/oxygen_level",
+    # Turbine side
+    "main_steam_temp_turbine":       "turbine/main_steam_temp",
+    "main_steam_pressure_turbine":   "turbine/main_steam_pressure",
+    "reheat_steam_temp_turbine":     "turbine/reheat_steam_temp",
+    "reheat_steam_pressure_turbine": "turbine/reheat_steam_pressure",
+    "control_stage_pressure":        "turbine/control_stage_pressure",
+    "high_exhaust_pressure":         "turbine/high_exhaust_pressure",
+    "condenser_vacuum":              "turbine/condenser_vacuum",
+    "circ_water_outlet_temp":        "turbine/circ_water_outlet_temp",
+    # Meta
+    "status":                        "boiler/status",
+    "fault":                         "system/faults",
 }
 
 # ─── NORMAL OPERATING RANGES ────────────────────────────────────
+# Typical values for a subcritical 300-600 MW utility boiler.
 NORMAL = {
-    "temperature":  {"min": 60,  "max": 100, "unit": "C",     "mean": 85},
-    "pressure":     {"min": 10,  "max": 14,  "unit": "bar",   "mean": 12},
-    "fuel_flow":    {"min": 5,   "max": 20,  "unit": "L/min", "mean": 12},
-    "air_flow":     {"min": 100, "max": 300, "unit": "m3/h",  "mean": 200},
-    "water_level":  {"min": 40,  "max": 60,  "unit": "%",     "mean": 50},
-    "feed_water":   {"min": 5,   "max": 20,  "unit": "L/min", "mean": 12},
+    "main_steam_flow":               {"min": 800,  "max": 1000, "mean": 900,  "unit": "t/h"},
+    "main_steam_temp_boiler":        {"min": 535,  "max": 545,  "mean": 540,  "unit": "C"},
+    "main_steam_pressure_boiler":    {"min": 16.0, "max": 17.5, "mean": 16.7, "unit": "MPa"},
+    "reheat_steam_temp_boiler":      {"min": 535,  "max": 545,  "mean": 540,  "unit": "C"},
+    "superheater_desup_flow":        {"min": 10,   "max": 40,   "mean": 25,   "unit": "t/h"},
+    "reheater_desup_flow":           {"min": 0,    "max": 15,   "mean": 5,    "unit": "t/h"},
+    "feedwater_temp":                {"min": 270,  "max": 285,  "mean": 278,  "unit": "C"},
+    "feedwater_flow":                {"min": 800,  "max": 1000, "mean": 900,  "unit": "t/h"},
+    "feedwater_pressure":            {"min": 18.0, "max": 20.0, "mean": 19.0, "unit": "MPa"},
+    "flue_gas_temp":                 {"min": 120,  "max": 140,  "mean": 130,  "unit": "C"},
+    "oxygen_level":                  {"min": 3,    "max": 5,    "mean": 4,    "unit": "%"},
+    "main_steam_temp_turbine":       {"min": 530,  "max": 540,  "mean": 535,  "unit": "C"},
+    "main_steam_pressure_turbine":   {"min": 15.5, "max": 17.0, "mean": 16.2, "unit": "MPa"},
+    "reheat_steam_temp_turbine":     {"min": 530,  "max": 540,  "mean": 535,  "unit": "C"},
+    "reheat_steam_pressure_turbine": {"min": 3.0,  "max": 4.0,  "mean": 3.5,  "unit": "MPa"},
+    "control_stage_pressure":        {"min": 10.0, "max": 13.0, "mean": 11.5, "unit": "MPa"},
+    "high_exhaust_pressure":         {"min": 3.0,  "max": 4.0,  "mean": 3.5,  "unit": "MPa"},
+    "condenser_vacuum":              {"min": 4.0,  "max": 7.0,  "mean": 5.0,  "unit": "kPa"},
+    "circ_water_outlet_temp":        {"min": 25,   "max": 35,   "mean": 30,   "unit": "C"},
 }
 
 # ─── FAULT DEFINITIONS ──────────────────────────────────────────
+# Each fault picks one sensor and multiplies its mean to push it
+# outside the normal range. Multipliers chosen to clearly exceed
+# the operating limits in NORMAL above.
 FAULT_TYPES = {
-    "HIGH_PRESSURE":    {"sensor": "pressure",    "multiplier": 1.3,  "severity": "CRITICAL"},
-    "LOW_WATER_LEVEL":  {"sensor": "water_level", "multiplier": 0.5,  "severity": "CRITICAL"},
-    "HIGH_TEMPERATURE": {"sensor": "temperature", "multiplier": 1.25, "severity": "WARNING"},
-    "LOW_FUEL_FLOW":    {"sensor": "fuel_flow",   "multiplier": 0.3,  "severity": "WARNING"},
-    "BURNER_FAILURE":   {"sensor": "burner_state","multiplier": 0,    "severity": "CRITICAL"},
+    "HIGH_MAIN_STEAM_PRESSURE":  {"sensor": "main_steam_pressure_boiler", "multiplier": 1.15, "severity": "CRITICAL"},
+    "LOW_FEEDWATER_FLOW":        {"sensor": "feedwater_flow",             "multiplier": 0.5,  "severity": "CRITICAL"},
+    "LOW_FEEDWATER_PRESSURE":    {"sensor": "feedwater_pressure",         "multiplier": 0.6,  "severity": "CRITICAL"},
+    "HIGH_FLUE_GAS_TEMP":        {"sensor": "flue_gas_temp",              "multiplier": 1.35, "severity": "WARNING"},
+    "LOW_OXYGEN":                {"sensor": "oxygen_level",               "multiplier": 0.3,  "severity": "WARNING"},
+    "HIGH_OXYGEN":               {"sensor": "oxygen_level",               "multiplier": 2.0,  "severity": "WARNING"},
+    "HIGH_REHEAT_TEMP":          {"sensor": "reheat_steam_temp_boiler",   "multiplier": 1.08, "severity": "WARNING"},
+    "CONDENSER_VACUUM_LOSS":     {"sensor": "condenser_vacuum",           "multiplier": 3.0,  "severity": "CRITICAL"},
+    "HIGH_CIRC_WATER_TEMP":      {"sensor": "circ_water_outlet_temp",     "multiplier": 1.3,  "severity": "WARNING"},
+    "EXCESSIVE_DESUP_SPRAY":     {"sensor": "superheater_desup_flow",     "multiplier": 2.5,  "severity": "WARNING"},
 }
 
 
 class BoilerSimulator:
     def __init__(self):
-        # Current state of all sensors
-        self.state = {
-            "temperature": 85.0,
-            "pressure": 12.0,
-            "fuel_flow": 12.0,
-            "air_flow": 200.0,
-            "water_level": 50.0,
-            "burner_state": True,
-            "feed_water": 12.0,
-        }
+        # Start every sensor at its mean value
+        self.state = {name: cfg["mean"] for name, cfg in NORMAL.items()}
         self.active_fault = None
         self.fault_duration = 0
         self.tick = 0  # counts simulation steps
 
-    def _add_noise(self, value, noise_pct=0.02):
+    def _add_noise(self, value, noise_pct=0.01):
         """Add small random noise to simulate sensor jitter."""
         noise = value * noise_pct * random.gauss(0, 1)
         return value + noise
@@ -461,10 +492,9 @@ class BoilerSimulator:
     def _drift_value(self, sensor_name):
         """Make values drift slowly and realistically using sine wave."""
         cfg = NORMAL[sensor_name]
-        # Slow oscillation around mean
+        # Slow oscillation around mean (5% of the sensor's range)
         drift = math.sin(self.tick * 0.05) * (cfg["max"] - cfg["min"]) * 0.05
-        base = cfg["mean"] + drift
-        return self._add_noise(base)
+        return self._add_noise(cfg["mean"] + drift)
 
     def _inject_fault(self):
         """Randomly decide to start a fault (5% chance per tick)."""
@@ -479,12 +509,9 @@ class BoilerSimulator:
         """Update all sensor values for this tick."""
         self.tick += 1
 
-        # Normal drift for all sensors
-        for sensor in ["temperature", "pressure", "fuel_flow", "air_flow", "water_level", "feed_water"]:
-            self.state[sensor] = round(self._drift_value(sensor), 2)
-
-        # Burner is normally ON
-        self.state["burner_state"] = True
+        # Normal drift for every sensor in NORMAL
+        for sensor in NORMAL:
+            self.state[sensor] = round(self._drift_value(sensor), 3)
 
         # ── Fault logic ──────────────────────────────────────────
         new_fault = self._inject_fault()
@@ -492,13 +519,8 @@ class BoilerSimulator:
         if self.active_fault:
             fault = FAULT_TYPES[self.active_fault]
             sensor = fault["sensor"]
-            
-            if sensor == "burner_state":
-                self.state["burner_state"] = False
-            else:
-                # Distort the affected sensor value
-                normal_val = NORMAL[sensor]["mean"]
-                self.state[sensor] = round(normal_val * fault["multiplier"], 2)
+            normal_val = NORMAL[sensor]["mean"]
+            self.state[sensor] = round(normal_val * fault["multiplier"], 3)
 
             self.fault_duration -= 1
             if self.fault_duration <= 0:
