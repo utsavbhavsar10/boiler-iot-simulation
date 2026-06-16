@@ -46,48 +46,44 @@ TOPICS = {
  "fault": "system/faults",
 }
 
-# Normal Operating RANGES
-# Typical values for a subcritical 300-600 MW utility boiler
+# Normal Operating RANGES + ALARM BANDS
+# Typical values for a subcritical 300-600 MW utility boiler.
+# Each sensor has: normal band (min/max), warning band (warn_low/warn_high),
+# and critical band (crit_low/crit_high). Anything outside crit is CRITICAL,
+# outside normal but inside crit is WARNING, otherwise NORMAL.
 NORMAL = {
-"main_steam_flow": {"min": 800, "max": 1000, "mean": 900,
-"unit": "t/h"},
- "main_steam_temp_boiler": {"min": 535, "max": 545, "mean": 540,
-"unit": "C"},
- "main_steam_pressure_boiler": {"min": 16.0, "max": 17.5, "mean": 16.7,
-"unit": "MPa"},
- "reheat_steam_temp_boiler": {"min": 535, "max": 545, "mean": 540,
-"unit": "C"},
- "superheater_desup_flow": {"min": 10, "max": 40, "mean": 25,
-"unit": "t/h"},
- "reheater_desup_flow": {"min": 0, "max": 15, "mean": 5,
-"unit": "t/h"},
- "feedwater_temp": {"min": 270, "max": 285, "mean": 278,
-"unit": "C"},
- "feedwater_flow": {"min": 800, "max": 1000, "mean": 900,
-"unit": "t/h"},
- "feedwater_pressure": {"min": 18.0, "max": 20.0, "mean": 19.0,
-"unit": "MPa"},
- "flue_gas_temp": {"min": 120, "max": 140, "mean": 130,
-"unit": "C"},
- "oxygen_level": {"min": 3, "max": 5, "mean": 4,
-"unit": "%"},
- "main_steam_temp_turbine": {"min": 530, "max": 540, "mean": 535,
-"unit": "C"},
- "main_steam_pressure_turbine": {"min": 15.5, "max": 17.0, "mean": 16.2,
-"unit": "MPa"},
- "reheat_steam_temp_turbine": {"min": 530, "max": 540, "mean": 535,
-"unit": "C"},
- "reheat_steam_pressure_turbine": {"min": 3.0, "max": 4.0, "mean": 3.5,
-"unit": "MPa"},
- "control_stage_pressure": {"min": 10.0, "max": 13.0, "mean": 11.5,
-"unit": "MPa"},
- "high_exhaust_pressure": {"min": 3.0, "max": 4.0, "mean": 3.5, 
-"unit": "MPa"},
-    "condenser_vacuum" : {"min": 4.0 , "max": 7.0 , "mean": 5.0,
-"unit": "kPa"},
-    "circ_water_outlet_temp": {"min": 25, "max": 35, "mean": 30,
-"unit": "C"},
+    "main_steam_flow":              {"min": 800,  "max": 1000, "mean": 900,  "warn_low": 750,  "warn_high": 1050, "crit_low": 700,  "crit_high": 1100, "unit": "t/h"},
+    "main_steam_temp_boiler":       {"min": 535,  "max": 545,  "mean": 540,  "warn_low": 525,  "warn_high": 555,  "crit_low": 520,  "crit_high": 565,  "unit": "C"},
+    "main_steam_pressure_boiler":   {"min": 16.0, "max": 17.5, "mean": 16.7, "warn_low": 15.5, "warn_high": 18.0, "crit_low": 15.0, "crit_high": 18.5, "unit": "MPa"},
+    "reheat_steam_temp_boiler":     {"min": 535,  "max": 545,  "mean": 540,  "warn_low": 525,  "warn_high": 555,  "crit_low": 520,  "crit_high": 565,  "unit": "C"},
+    "superheater_desup_flow":       {"min": 10,   "max": 40,   "mean": 25,   "warn_low": 5,    "warn_high": 55,   "crit_low": 0,    "crit_high": 70,   "unit": "t/h"},
+    "reheater_desup_flow":          {"min": 0,    "max": 15,   "mean": 5,    "warn_low": 0,    "warn_high": 25,   "crit_low": 0,    "crit_high": 35,   "unit": "t/h"},
+    "feedwater_temp":               {"min": 270,  "max": 285,  "mean": 278,  "warn_low": 260,  "warn_high": 295,  "crit_low": 250,  "crit_high": 305,  "unit": "C"},
+    "feedwater_flow":               {"min": 800,  "max": 1000, "mean": 900,  "warn_low": 750,  "warn_high": 1050, "crit_low": 700,  "crit_high": 1100, "unit": "t/h"},
+    "feedwater_pressure":           {"min": 18.0, "max": 20.0, "mean": 19.0, "warn_low": 17.0, "warn_high": 21.0, "crit_low": 16.0, "crit_high": 22.0, "unit": "MPa"},
+    "flue_gas_temp":                {"min": 120,  "max": 140,  "mean": 130,  "warn_low": 110,  "warn_high": 160,  "crit_low": 100,  "crit_high": 175,  "unit": "C"},
+    "oxygen_level":                 {"min": 3,    "max": 5,    "mean": 4,    "warn_low": 2,    "warn_high": 7,    "crit_low": 1.5,  "crit_high": 8,    "unit": "%"},
+    "main_steam_temp_turbine":      {"min": 530,  "max": 540,  "mean": 535,  "warn_low": 520,  "warn_high": 550,  "crit_low": 515,  "crit_high": 560,  "unit": "C"},
+    "main_steam_pressure_turbine":  {"min": 15.5, "max": 17.0, "mean": 16.2, "warn_low": 15.0, "warn_high": 17.5, "crit_low": 14.5, "crit_high": 18.0, "unit": "MPa"},
+    "reheat_steam_temp_turbine":    {"min": 530,  "max": 540,  "mean": 535,  "warn_low": 520,  "warn_high": 550,  "crit_low": 515,  "crit_high": 560,  "unit": "C"},
+    "reheat_steam_pressure_turbine":{"min": 3.0,  "max": 4.0,  "mean": 3.5,  "warn_low": 2.7,  "warn_high": 4.3,  "crit_low": 2.5,  "crit_high": 4.5,  "unit": "MPa"},
+    "control_stage_pressure":       {"min": 10.0, "max": 13.0, "mean": 11.5, "warn_low": 9.0,  "warn_high": 14.0, "crit_low": 8.0,  "crit_high": 15.0, "unit": "MPa"},
+    "high_exhaust_pressure":        {"min": 3.0,  "max": 4.0,  "mean": 3.5,  "warn_low": 2.7,  "warn_high": 4.3,  "crit_low": 2.5,  "crit_high": 4.5,  "unit": "MPa"},
+    "condenser_vacuum":             {"min": 4.0,  "max": 7.0,  "mean": 5.0,  "warn_low": 3.0,  "warn_high": 10.0, "crit_low": 2.0,  "crit_high": 13.0, "unit": "kPa"},
+    "circ_water_outlet_temp":       {"min": 25,   "max": 35,   "mean": 30,   "warn_low": 20,   "warn_high": 38,   "crit_low": 15,   "crit_high": 42,   "unit": "C"},
 }
+
+
+def classify_status(sensor_name, value):
+    """Return NORMAL / WARNING / CRITICAL based on industry alarm bands."""
+    cfg = NORMAL.get(sensor_name)
+    if cfg is None or value is None:
+        return "UNKNOWN"
+    if value < cfg["crit_low"] or value > cfg["crit_high"]:
+        return "CRITICAL"
+    if value < cfg["min"] or value > cfg["max"]:
+        return "WARNING"
+    return "NORMAL"
 
 # FAULT DEFINITIONS
 FAULT_TYPES = {
@@ -197,7 +193,7 @@ def main():
         new_fault = simulator.update()
 
         #Timestampe for all messages this tick
-        timestamp = datetime.now(UTC).isoformat()+ "Z"
+        timestamp = datetime.now(UTC).isoformat()
     
         # Publish each sensor to its own topic
         for sensor_name, topic in TOPICS.items():
@@ -213,7 +209,8 @@ def main():
                 "value": value,
                 "unit": NORMAL.get(sensor_name, {}).get("unit", ""),
                 "timestamp": timestamp,
-                "status": simulator.get_status(),
+                "status": classify_status(sensor_name, value),
+                "boiler_status": simulator.get_status(),
             }
             client.publish(topic, json.dumps(payload), qos=1)
         

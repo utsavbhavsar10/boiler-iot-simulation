@@ -2,15 +2,48 @@ services:
   emqx:
     image: emqx/emqx:latest #which prebuilt image to download
     container_name: emqx_broker
-    ports: 
+    ports:
       - "1883:1883"   #MQTT(Python scripts use this port to connect to the broker)
       - "8083:8083"   # MQTT over WebSocket (browsers)
       - "18083:18083" # EMQX's own admin web UI
     environment:
-     - EMQX_ALLOW_ANONYMOUS=true # no username/password in dev
+      - EMQX_ALLOW_ANONYMOUS=true # no username/password in dev
     volumes:
-     - emqx_data:/opt/emqx/data # persist data across restarts
+      - emqx_data:/opt/emqx/data # persist data across restarts
+    restart: unless-stopped
+
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    ports:
+      - "8086:8086" # InfluxDB API
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
+      - DOCKER_INFLUXDB_INIT_ORG=boiler_org
+      - DOCKER_INFLUXDB_INIT_BUCKET=boiler_data
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-token-123
+    volumes:
+      - influxdb_data:/var/lib/influxdb2 # persist data across restarts
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000" # Grafana web UI
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - influxdb
     restart: unless-stopped
 
 volumes:
   emqx_data:
+  influxdb_data:
+  grafana_data:
+

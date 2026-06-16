@@ -17,14 +17,30 @@ TOPICS = {
  "status": "chimney/status",
  "fault": "system/faults",
 }
+# Industry-standard alarm bands for chimney/stack sensors.
+# Each sensor has normal (min/max), warning (warn_low/warn_high) and
+# critical (crit_low/crit_high). Note draft is negative (suction) -
+# values closer to 0 indicate a blocked flue (worse).
 NORMAL = {
- "flue_temp": {"min": 150, "max": 250, "mean": 200, "unit": "C"},
- "co2": {"min": 8, "max": 14, "mean": 11, "unit": "%"},
- "o2": {"min": 3, "max": 8, "mean": 5, "unit": "%"},
- "co": {"min": 0, "max": 50, "mean": 20, "unit": "ppm"},
- "draft": {"min": -5, "max": -2, "mean": -3.5,"unit": "Pa"},
- "stack_velocity": {"min": 3, "max": 8, "mean": 5, "unit": "m/s"},
+    "flue_temp":      {"min": 150, "max": 250, "mean": 200,  "warn_low": 130,  "warn_high": 270,  "crit_low": 100,  "crit_high": 300,  "unit": "C"},
+    "co2":            {"min": 8,   "max": 14,  "mean": 11,   "warn_low": 6,    "warn_high": 16,   "crit_low": 5,    "crit_high": 18,   "unit": "%"},
+    "o2":             {"min": 3,   "max": 8,   "mean": 5,    "warn_low": 2,    "warn_high": 10,   "crit_low": 1.5,  "crit_high": 12,   "unit": "%"},
+    "co":             {"min": 0,   "max": 50,  "mean": 20,   "warn_low": 0,    "warn_high": 100,  "crit_low": 0,    "crit_high": 150,  "unit": "ppm"},
+    "draft":          {"min": -5,  "max": -2,  "mean": -3.5, "warn_low": -7,   "warn_high": -1,   "crit_low": -9,   "crit_high": -0.5, "unit": "Pa"},
+    "stack_velocity": {"min": 3,   "max": 8,   "mean": 5,    "warn_low": 2,    "warn_high": 10,   "crit_low": 1,    "crit_high": 12,   "unit": "m/s"},
 }
+
+
+def classify_status(sensor_name, value):
+    """Return NORMAL / WARNING / CRITICAL based on industry alarm bands."""
+    cfg = NORMAL.get(sensor_name)
+    if cfg is None or value is None:
+        return "UNKNOWN"
+    if value < cfg["crit_low"] or value > cfg["crit_high"]:
+        return "CRITICAL"
+    if value < cfg["min"] or value > cfg["max"]:
+        return "WARNING"
+    return "NORMAL"
 CHIMNEY_FAULTS = {
  "BLOCKED_FLUE": {"sensor": "draft", "effect": "reduce", "factor": 0.3,
 "severity": "CRITICAL"},
@@ -87,7 +103,7 @@ def main():
 
     while True:
         new_fault = sim.update()
-        ts = datetime.now(UTC).isoformat()+ "Z"
+        ts = datetime.now(UTC).isoformat()
 
         for sensor_name, topic in TOPICS.items():
             if sensor_name in ("status", "fault"):
@@ -98,7 +114,8 @@ def main():
                 "value": sim.state.get(sensor_name),
                 "unit": NORMAL.get(sensor_name, {}).get("unit", ""),
                 "timestamp": ts,
-                "status": sim.get_status(),
+                "status": classify_status(sensor_name, sim.state.get(sensor_name)),
+                "chimney_status": sim.get_status(),
             }
             client.publish(topic, json.dumps(payload), qos=1)
 
