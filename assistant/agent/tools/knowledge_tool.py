@@ -13,15 +13,28 @@ Used by the agent for:
 import os
 import chromadb
 from chromadb.utils import embedding_functions
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from .env file
 
 from assistant.config import (
     CHROMA_PATH, CHROMA_COLLECTION, EMBEDDING_MODEL, TOP_K_DOCS,
 )
 
+# Optional dependencies for hybrid search
+try:
+    from rank_bm25 import BM25Okapi
+    import numpy as np
+    from sentence_transformers import CrossEncoder
+    HAS_HYBRID_DEPS = True
+except ImportError:
+    HAS_HYBRID_DEPS = False
+
 # Must use the same embedding function as knowledge_base/indexer.py
 # so that query vectors are compatible with stored document vectors.
+OPEN_AI_API = os.getenv("OPENAI_API_KEY")
 _embedding_fn = embedding_functions.OpenAIEmbeddingFunction(
-    api_key=os.getenv("OPENAI_API_KEY"),
+    api_key=OPEN_AI_API,
     model_name=EMBEDDING_MODEL,
 )
 _client = chromadb.PersistentClient(path=CHROMA_PATH)
@@ -54,22 +67,44 @@ def search_knowledge_base(query: str, top_k: int = TOP_K_DOCS) -> str:
         )
 
     try:
-        results = _collection.query(
-            query_texts=[query],
-            n_results=max(1, int(top_k)),
-        )
+        if HAS_HYBRID_DEPS:
+            # Hybrid search: Fetch more candidates and rerank
+            results = _collection.query(
+                query_texts=[query],
+                n_results=top_k * 3,
+            )
+            docs = results.get("documents", [[]])[0]
+            metadatas = results.get("metadatas", [[]])[0]
+            ids = results.get("ids", [[]])[0]
+            
+            # Reranking logic
+            cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            pairs = [(query, doc) for doc in docs]
+            scores = cross_encoder.predict(pairs)
+            
+            ranked_indices = np.argsort(scores)[::-1][:top_k]
+            
+            final_docs = [docs[i] for i in ranked_indices]
+            final_metas = [metadatas[i] for i in ranked_indices]
+            final_ids = [ids[i] for i in ranked_indices]
+            final_scores = [float(scores[i]) for i in ranked_indices]
+        else:
+            # Pure ChromaDB fallback
+            results = _collection.query(
+                query_texts=[query],
+                n_results=max(1, int(top_k)),
+            )
+            final_ids = results.get("ids", [[]])[0]
+            final_docs = results.get("documents", [[]])[0]
+            final_metas = results.get("metadatas", [[]])[0]
+            final_scores = [1.0 - d for d in results.get("distances", [[]])[0]]
 
-        ids       = results.get("ids", [[]])[0]
-        docs      = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        distances = results.get("distances", [[]])[0]
-
-        if not docs:
+        if not final_docs:
             return f"No knowledge base documents matched query: '{query}'."
 
         lines = [f"=== KNOWLEDGE BASE RESULTS for: '{query}' ==="]
-        for doc_id, meta, text, dist in zip(ids, metadatas, docs, distances):
-            similarity = round((1 - dist) * 100, 1)
+        for doc_id, meta, text, score in zip(final_ids, final_metas, final_docs, final_scores):
+            similarity = round(score * 100, 1)
             title    = meta.get("title", doc_id)
             category = meta.get("category", "general")
             lines.append(

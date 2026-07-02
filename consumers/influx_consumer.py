@@ -2,19 +2,20 @@
    every sensor reading into InfluxDB as a time-series data point.
    producer-consumer architecture
 """
+import os
 import paho.mqtt.client as mqtt
 import json
 from datetime import UTC, datetime
 from influxdb_client import InfluxDBClient, Point , WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
-#Config
-MQTT_HOST = "localhost"
-MQTT_PORT = 1883
-INFLUX_URL = "http://localhost:8086"
-INFLUX_TOKEN = "my-super-secret-token-123"
-INFLUX_ORG = "boiler_org"
-INFLUX_BUCKET = "boiler_data"
+#Config — read from environment so Docker Compose can inject service names
+MQTT_HOST    = os.getenv("MQTT_HOST",    "localhost")
+MQTT_PORT    = int(os.getenv("MQTT_PORT", "1883"))
+INFLUX_URL   = os.getenv("INFLUX_URL",   "http://localhost:8086")
+INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "my-super-secret-token-123")
+INFLUX_ORG   = os.getenv("INFLUX_ORG",   "boiler_org")
+INFLUX_BUCKET= os.getenv("INFLUX_BUCKET","boiler_data")
 
 #Connect to InfluxDB
 influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)

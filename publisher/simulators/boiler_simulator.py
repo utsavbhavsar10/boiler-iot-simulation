@@ -2,19 +2,87 @@
 Boiler Simulator - generates realistic boiler sensor data and published via 
 MQTT
 Simulates normal operation + gradual drift + sudden faults
+
+Dual-Mode Support (POC standard):
+  NORMAL mode:      Sensors oscillate within normal operating band (default).
+  DEGRADATION mode: main_steam_temp_boiler ramps +2°C/tick toward 580°C.
+                    Chronos detects the trend and fires an auto-recovery alert.
+
+Mode is set via POST /simulation/mode on the FastAPI backend.
+Simulator polls the endpoint every SIM_MODE_POLL_SECONDS seconds.
 """
 
+import os
 import paho.mqtt.client as mqtt
 import json
 import time
 import math
 import random
+import threading
+import logging
+
+try:
+    import requests as _requests
+    _REQUESTS_AVAILABLE = True
+except ImportError:
+    _REQUESTS_AVAILABLE = False
+
 from datetime import UTC, datetime
 
-# MQTT Configuration
-BROKER_HOST = "localhost"
-BROKER_PORT = 1883
+logger = logging.getLogger(__name__)
+
+# MQTT Configuration — can be overridden via environment variables
+# (Docker Compose sets BROKER_HOST=emqx; localhost is the dev default)
+BROKER_HOST = os.getenv("BROKER_HOST", "localhost")
+BROKER_PORT = int(os.getenv("MQTT_PORT", "1883"))
 CLIENT_ID = "boiler_simulator"
+
+# FastAPI base URL — simulator polls /simulation/mode to read dual-mode state
+FASTAPI_URL           = os.getenv("FASTAPI_URL",          "http://localhost:8000")
+SIM_MODE_POLL_SECONDS = int(os.getenv("SIM_MODE_POLL_SECONDS", "10"))
+
+# Phase cycle: alternate SAFE ↔ WARNING so chronos/health checks see both states.
+# Tunable via env; defaults: 5 min safe, 2 min warning.
+SAFE_PHASE_SECONDS = int(os.getenv("SIM_SAFE_PHASE_SECONDS", "300"))
+WARN_PHASE_SECONDS = int(os.getenv("SIM_WARN_PHASE_SECONDS", "120"))
+TICK_SECONDS       = 0.5  # publish interval
+
+# ── Shared simulation mode (polled from FastAPI every 10s) ────────────────────
+_simulation_mode: dict[str, str] = {"mode": "normal"}
+_mode_lock = threading.Lock()
+
+
+def _poll_simulation_mode() -> None:
+    """
+    Background thread: polls FastAPI GET /simulation/mode every SIM_MODE_POLL_SECONDS.
+    Updates _simulation_mode["mode"] atomically.
+    If FastAPI is not running, stays in current mode silently.
+    """
+    while True:
+        if _REQUESTS_AVAILABLE:
+            try:
+                resp = _requests.get(
+                    f"{FASTAPI_URL}/simulation/mode",
+                    timeout=2.0,
+                )
+                if resp.ok:
+                    new_mode = resp.json().get("mode", "normal")
+                    with _mode_lock:
+                        if _simulation_mode["mode"] != new_mode:
+                            print(f"🎛️  Simulator mode changed → {new_mode.upper()}")
+                            _simulation_mode["mode"] = new_mode
+            except Exception:
+                pass  # FastAPI not up yet — keep current mode
+        time.sleep(SIM_MODE_POLL_SECONDS)
+
+
+# Start the mode-polling thread as daemon
+threading.Thread(
+    target=_poll_simulation_mode,
+    daemon=True,
+    name="sim-mode-poll",
+).start()
+
 
 # TOPIC DEFINITION
 TOPICS = {
@@ -45,6 +113,16 @@ TOPICS = {
  "status": "boiler/status",
  "fault": "system/faults",
 }
+
+# Only WARNING-severity faults used by scheduled phase (no CRITICAL spam).
+SCHEDULED_WARNING_FAULTS = [
+    "HIGH_FLUE_GAS_TEMP",
+    "LOW_OXYGEN",
+    "HIGH_OXYGEN",
+    "HIGH_REHEAT_TEMP",
+    "HIGH_CIRC_WATER_TEMP",
+    "EXCESSIVE_DESUP_SPRAY",
+]
 
 # Normal Operating RANGES + ALARM BANDS
 # Typical values for a subcritical 300-600 MW utility boiler.
@@ -116,6 +194,12 @@ class BoilerSimulator:
         self.active_fault = None
         self.fault_duration = 0
         self.tick = 0 #Count simulation steps
+        # Phase scheduler
+        self.phase = "SAFE"
+        self.phase_remaining = int(SAFE_PHASE_SECONDS / TICK_SECONDS)
+        self._scheduled_fault: str | None = None
+        # Degradation mode: track current ramped temp independently
+        self._degradation_temp: float = NORMAL["main_steam_temp_boiler"]["mean"]
 
     def _add_noise(self , value , noise_pct=0.01):
         """Add small random noise to simualate sensor jtter"""
@@ -129,15 +213,50 @@ class BoilerSimulator:
         drift = math.sin(self.tick * 0.05) * (cfg["max"] - cfg["min"]) * 0.05
         return self._add_noise(cfg["mean"] + drift)
 
-    def _inject_fault(self):
-        """Randomly decide to start a fault (5% chance per tick)"""
-        if self.active_fault is None and random.random() < 0.05:
-            fault_name = random.choice(list(FAULT_TYPES.keys()))
-            self.active_fault = fault_name
-            self.fault_duration = random.randint(10,30)   #lasts 10-30 ticks
-            return fault_name
+    def _apply_degradation_mode(self) -> None:
+        """
+        Degradation mode: ramp main_steam_temp_boiler +2°C per tick
+        toward 580°C (critical threshold: 565°C).
+        Also drop feedwater_temp slightly to compound the scenario.
+        Called each tick when simulation_mode is 'degradation'.
+
+        On recovery (mode flips back to 'normal'), reset the ramped temp
+        so the sensor returns to normal drift immediately.
+        """
+        # Slow ramp: 0.05°C/tick × 2 ticks/s = 0.1°C/s = 6°C/min.
+        # 540 → 555 (WARNING) ≈ 2.5 min. 555 → 565 (CRITICAL) ≈ 1.7 min.
+        # Gives Chronos a clear slope and non-zero minutes_to_critical.
+        self._degradation_temp = min(self._degradation_temp + 0.05, 582.0)
+        self.state["main_steam_temp_boiler"] = round(
+            self._add_noise(self._degradation_temp, 0.002), 3
+        )
+        # Compound scenario: feedwater_temp drops (heat balance disruption)
+        fw_current = self.state.get("feedwater_temp", NORMAL["feedwater_temp"]["mean"])
+        self.state["feedwater_temp"] = round(
+            max(fw_current - 0.5, NORMAL["feedwater_temp"]["crit_low"]), 3
+        )
+
+    def _advance_phase(self):
+        """Toggle SAFE↔WARNING when current phase elapses."""
+        self.phase_remaining -= 1
+        if self.phase_remaining > 0:
+            return None
+        if self.phase == "SAFE":
+            self.phase = "WARNING"
+            self.phase_remaining = int(WARN_PHASE_SECONDS / TICK_SECONDS)
+            new_fault = random.choice(SCHEDULED_WARNING_FAULTS)
+            self.active_fault = new_fault
+            self._scheduled_fault = new_fault
+            self.fault_duration = self.phase_remaining
+            return new_fault
+        # WARNING → SAFE
+        self.phase = "SAFE"
+        self.phase_remaining = int(SAFE_PHASE_SECONDS / TICK_SECONDS)
+        self.active_fault = None
+        self._scheduled_fault = None
+        self.fault_duration = 0
         return None
-    
+
     def update(self):
         """Update all sensor values for this tick"""
         self.tick += 1
@@ -146,18 +265,40 @@ class BoilerSimulator:
         for sensor in NORMAL:
             self.state[sensor] = round(self._drift_value(sensor) , 3)
 
-        # Fault Logic   
-        new_fault = self._inject_fault()
+        # Phase scheduler — deterministic SAFE/WARNING cycle.
+        new_fault = self._advance_phase()
 
         if self.active_fault:
             fault = FAULT_TYPES[self.active_fault]
             sensor = fault["sensor"]
-            normal_val = NORMAL[sensor]["mean"]
-            self.state[sensor] = round(normal_val * fault["multiplier"] , 3)
+            cfg = NORMAL[sensor]
+            # Scheduled phase: clamp into WARNING band (between normal max and crit high)
+            # so the reading is clearly elevated but never CRITICAL.
+            if self._scheduled_fault is not None:
+                if fault["multiplier"] >= 1.0:
+                    target = (cfg["max"] + cfg["crit_high"]) / 2
+                else:
+                    target = (cfg["min"] + cfg["crit_low"]) / 2
+                self.state[sensor] = round(self._add_noise(target, 0.005), 3)
+            else:
+                # Legacy random-fault path (currently unused; kept for compatibility)
+                self.state[sensor] = round(cfg["mean"] * fault["multiplier"], 3)
+                self.fault_duration -= 1
+                if self.fault_duration <= 0:
+                    self.active_fault = None
 
-            self.fault_duration -= 1
-            if self.fault_duration <= 0:
-                self.active_fault = None  #Fault resolved
+        # ── Dual-mode injection ────────────────────────────────────────────────
+        # Applied AFTER normal drift so it cleanly overrides the temp sensor.
+        with _mode_lock:
+            current_mode = _simulation_mode.get("mode", "normal")
+
+        if current_mode == "degradation":
+            self._apply_degradation_mode()
+        else:
+            # If we just recovered from degradation, reset the ramp tracker
+            # so the sensor returns to normal drift on the very next tick.
+            if self._degradation_temp != NORMAL["main_steam_temp_boiler"]["mean"]:
+                self._degradation_temp = NORMAL["main_steam_temp_boiler"]["mean"]
 
         return new_fault # Return fault name if new fault just started
     

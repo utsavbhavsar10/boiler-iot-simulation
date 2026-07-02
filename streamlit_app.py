@@ -127,8 +127,9 @@ st.markdown(
 TOOL_LABEL = {
     "fetch_realtime_sensors": ("📡", "Reading live sensors"),
     "get_fault_history":      ("📜", "Checking recent faults"),
-    "predict_trend":          ("📈", "Predicting trend"),
+    "predict_trend":          ("📈", "Predicting trend (Chronos AI)"),
     "search_knowledge_base":  ("📚", "Searching knowledge base"),
+    "get_chronos_forecast":   ("🧠", "Running Chronos probabilistic forecast"),
 }
 
 # ── Sidebar ──────────────────────────────────────────────────────────
@@ -138,7 +139,7 @@ with st.sidebar:
 
     api_url = st.text_input("API URL", value=API_URL, label_visibility="collapsed")
 
-    # Health
+    # API Health
     try:
         h = requests.get(f"{api_url}/health", timeout=3).json()
         st.markdown(
@@ -150,6 +151,50 @@ with st.sidebar:
         st.markdown(
             "<span class='status-pill' style='background:#3a1414;color:#f87171'>"
             "● offline</span>",
+            unsafe_allow_html=True,
+        )
+
+    # Chronos Forecast Health
+    try:
+        ch = requests.get(f"{api_url}/health/chronos", timeout=3).json()
+        c_status = ch.get("status", "unknown")
+        c_sensors = ch.get("sensors_forecasted", 0)
+        c_total   = ch.get("sensors_total", 0)
+        c_warn    = ch.get("sensors_with_warnings", 0)
+        c_crit    = ch.get("sensors_with_critical", 0)
+        c_age     = ch.get("cache_age_seconds")
+        age_str   = f"{int(c_age)}s ago" if c_age is not None else "—"
+
+        if c_status == "healthy":
+            badge_style = "background:#0f3a2a;color:#34d399"
+            badge_text  = f"🧠 Chronos ✅ {c_sensors}/{c_total} sensors · {age_str}"
+        elif c_status == "warming_up":
+            badge_style = "background:#2a2200;color:#fbbf24"
+            badge_text  = "🧠 Chronos ⏳ warming up…"
+        else:
+            badge_style = "background:#3a1414;color:#f87171"
+            badge_text  = f"🧠 Chronos ⚠️ stale ({age_str})"
+
+        st.markdown(
+            f"<span class='status-pill' style='{badge_style}'>{badge_text}</span>",
+            unsafe_allow_html=True,
+        )
+        if c_crit > 0:
+            st.markdown(
+                f"<span class='status-pill' style='background:#3a1414;color:#f87171'>"
+                f"🚨 {c_crit} sensor(s) approaching CRITICAL</span>",
+                unsafe_allow_html=True,
+            )
+        elif c_warn > 0:
+            st.markdown(
+                f"<span class='status-pill' style='background:#2a1f00;color:#fbbf24'>"
+                f"⚠️ {c_warn} sensor(s) approaching WARNING</span>",
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        st.markdown(
+            "<span class='status-pill' style='background:#1f2530;color:#7a8190'>"
+            "🧠 Chronos: unavailable</span>",
             unsafe_allow_html=True,
         )
 
@@ -274,7 +319,7 @@ if nav == "📊 Live Status":
 
 # ── Chat view ────────────────────────────────────────────────────────
 st.markdown("## 💬 Ask Boiler-AI")
-st.caption("Diagnoses faults, predicts trends, and explains root causes from live sensor data.")
+st.caption("Diagnoses faults, predicts trends, and Chronos AI forecasts upcoming sensor breaches.")
 
 # Empty state
 if not st.session_state.history:
@@ -293,8 +338,10 @@ if not st.session_state.history:
     suggestions = [
         "Is the boiler safe right now?",
         "Why might feedwater pressure be low?",
-        "Show me recent faults and their causes.",
+        "Will any sensor breach a critical threshold in the next 30 minutes?",
         "Predict if flue gas temperature will breach the limit.",
+        "Is anything about to fail? Scan all sensors.",
+        "Show me recent faults and their causes.",
     ]
     clicked = None
     for i, sug in enumerate(suggestions):

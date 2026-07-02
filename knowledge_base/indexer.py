@@ -21,6 +21,8 @@ import sys
 import chromadb
 from chromadb.utils import embedding_functions
 import os
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
 
 # Allow running as a script from inside knowledge_base/ as well as `-m`
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,11 +33,12 @@ if _PROJECT_ROOT not in sys.path:
 from knowledge_base.boiler_guide import KNOWLEDGE_DOCUMENTS, validate_documents
 from assistant.config import CHROMA_PATH, CHROMA_COLLECTION, EMBEDDING_MODEL
 
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Load OpenAI embedding model for ChromaDB
 print(f"Loading Embedding model: {EMBEDDING_MODEL}...")
 embedding_fn = embedding_functions.OpenAIEmbeddingFunction(
-    api_key=os.getenv("OPENAI_API_KEY"),
+    api_key=OPENAI_API_KEY,
     model_name=EMBEDDING_MODEL,
 )
 

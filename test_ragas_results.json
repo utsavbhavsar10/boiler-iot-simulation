@@ -1,0 +1,67 @@
+[
+  {
+    "q": "what is the current main steam flow?",
+    "answer_len": 117,
+    "bug_hit": true,
+    "tools": [],
+    "latency_ms": 14688.9,
+    "steps": 0,
+    "faithfulness": 0.0,
+    "answer_relevancy": 0.0,
+    "tool_precision": 0.0,
+    "overall_quality": 0.0,
+    "eval_status": "ok"
+  },
+  {
+    "q": "Is the boiler safe right now?",
+    "answer_len": 117,
+    "bug_hit": true,
+    "tools": [],
+    "latency_ms": 4096.5,
+    "steps": 0,
+    "faithfulness": 0.0,
+    "answer_relevancy": 0.0,
+    "tool_precision": 0.0,
+    "overall_quality": 0.0,
+    "eval_status": "ok"
+  },
+  {
+    "q": "Why does HIGH_FLUE_TEMP happen and how do I fix it?",
+    "answer_len": 117,
+    "bug_hit": true,
+    "tools": [],
+    "latency_ms": 3306.7,
+    "steps": 0,
+    "faithfulness": 0.0,
+    "answer_relevancy": 0.0,
+    "tool_precision": 0.0,
+    "overall_quality": 0.0,
+    "eval_status": "ok"
+  },
+  {
+    "q": "Will any sensor breach a threshold in the next 30 minutes?",
+    "answer_len": 117,
+    "bug_hit": true,
+    "tools": [],
+    "latency_ms": 3497.8,
+    "steps": 0,
+    "faithfulness": 0.0,
+    "answer_relevancy": 0.0,
+    "tool_precision": 0.0,
+    "overall_quality": 0.0,
+    "eval_status": "ok"
+  },
+  {
+    "q": "Have there been any faults in the last hour?",
+    "answer_len": 117,
+    "bug_hit": true,
+    "tools": [],
+    "latency_ms": 3422.6,
+    "steps": 0,
+    "faithfulness": 0.0,
+    "answer_relevancy": 0.0,
+    "tool_precision": 0.0,
+    "overall_quality": 0.0,
+    "eval_status": "ok"
+  }
+]

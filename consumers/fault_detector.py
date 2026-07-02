@@ -6,19 +6,20 @@ values go out of range.
 Runs independently alongside influx_consumer.py
 """
 
+import os
 import paho.mqtt.client as mqtt
 from influxdb_client import InfluxDBClient , Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 import json
 from datetime import datetime , UTC
 
-# Config
-MQTT_HOST = "localhost"
-MQTT_PORT  = 1883
-INFLUX_URL = "http://localhost:8086"
-INFLUX_TOKEN = "my-super-secret-token-123"
-INFLUX_ORG = "boiler_org"
-INFLUX_BUCKET = "boiler_data"
+# Config — read from environment so Docker Compose can inject service names
+MQTT_HOST    = os.getenv("MQTT_HOST",    "localhost")
+MQTT_PORT    = int(os.getenv("MQTT_PORT", "1883"))
+INFLUX_URL   = os.getenv("INFLUX_URL",   "http://localhost:8086")
+INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "my-super-secret-token-123")
+INFLUX_ORG   = os.getenv("INFLUX_ORG",   "boiler_org")
+INFLUX_BUCKET= os.getenv("INFLUX_BUCKET","boiler_data")
 
 # Threshold Rules
 # Format: sensor_name -> (min_ok, max_ok, severity, fault_code, unit)

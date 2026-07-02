@@ -1,0 +1,15 @@
+# ══════════════════════════════════════════════════════════════════════
+# Grafana Dashboard Provider
+# Tells Grafana to load .json dashboard files from this directory.
+# ══════════════════════════════════════════════════════════════════════
+apiVersion: 1
+
+providers:
+  - name: Boiler IoT Historian
+    orgId: 1
+    type: file
+    disableDeletion: false      # allow deletion from UI
+    updateIntervalSeconds: 10   # reload changed files every 10s
+    allowUiUpdates: true        # save changes made in UI back to disk
+    options:
+      path: /etc/grafana/provisioning/dashboards

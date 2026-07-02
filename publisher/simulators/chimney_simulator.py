@@ -1,12 +1,22 @@
 """
 Chimney Simulator — generates flue gas and draft sensor data.
 """
+import os
 import paho.mqtt.client as mqtt
 import json, time, random, math
 from datetime import UTC, datetime
-BROKER_HOST = "localhost"
-BROKER_PORT = 1883
+# Can be overridden via env var so Docker Compose can use service name 'emqx'
+BROKER_HOST = os.getenv("BROKER_HOST", "localhost")
+BROKER_PORT = int(os.getenv("MQTT_PORT", "1883"))
 CLIENT_ID = "chimney_simulator"
+
+# Phase cycle (shared semantics with boiler simulator).
+SAFE_PHASE_SECONDS = int(os.getenv("SIM_SAFE_PHASE_SECONDS", "300"))
+WARN_PHASE_SECONDS = int(os.getenv("SIM_WARN_PHASE_SECONDS", "120"))
+TICK_SECONDS       = 0.5
+
+# WARNING-severity faults only — used by scheduled phase.
+SCHEDULED_WARNING_FAULTS = ["LOW_DRAFT", "HIGH_FLUE_TEMP"]
 TOPICS = {
  "flue_temp": "chimney/flue_temp",
  "co2": "chimney/co2_percentage",
@@ -58,32 +68,58 @@ class ChimneySimulator:
         self.active_fault = None
         self.fault_duration = 0
         self.state = {k: NORMAL[k]["mean"] for k in NORMAL}
+        self.phase = "SAFE"
+        self.phase_remaining = int(SAFE_PHASE_SECONDS / TICK_SECONDS)
+        self._scheduled_fault = None
+
+    def _advance_phase(self):
+        self.phase_remaining -= 1
+        if self.phase_remaining > 0:
+            return None
+        if self.phase == "SAFE":
+            self.phase = "WARNING"
+            self.phase_remaining = int(WARN_PHASE_SECONDS / TICK_SECONDS)
+            new_fault = random.choice(SCHEDULED_WARNING_FAULTS)
+            self.active_fault = new_fault
+            self._scheduled_fault = new_fault
+            self.fault_duration = self.phase_remaining
+            return new_fault
+        self.phase = "SAFE"
+        self.phase_remaining = int(SAFE_PHASE_SECONDS / TICK_SECONDS)
+        self.active_fault = None
+        self._scheduled_fault = None
+        return None
 
     def update(self):
         self.tick += 1
         for sensor in NORMAL:
             cfg = NORMAL[sensor]
             drift = math.sin(self.tick * 0.04 + 1.5) * (cfg["max"] - cfg["min"]) * 0.05
-            noise = random.gauss(0, 1) * cfg["mean"] * 0.015
+            # Noise must not push past warning band — scale to a small fraction
+            # of the band width, not 1.5% of mean (which is too large for
+            # narrow-band sensors like draft).
+            band_width = max(cfg["max"] - cfg["min"], 1e-6)
+            noise = random.gauss(0, 1) * band_width * 0.05
             self.state[sensor] = round(cfg["mean"] + drift + noise, 2)
 
-        new_fault = None
-        if self.active_fault is None and random.random() < 0.04:
-            new_fault = random.choice(list(CHIMNEY_FAULTS.keys()))
-            self.active_fault = new_fault
-            self.fault_duration = random.randint(8, 20)
+        new_fault = self._advance_phase()
 
-        if self.active_fault:
+        if self.active_fault and self._scheduled_fault is not None:
             fault = CHIMNEY_FAULTS[self.active_fault]
             sensor = fault["sensor"]
-            base = NORMAL[sensor]["mean"]
+            cfg = NORMAL[sensor]
+            # Push sensor into WARNING band only (between normal edge and crit edge).
             if fault["effect"] == "spike":
-                self.state[sensor] = round(base * fault["factor"], 2)
-            elif fault["effect"] == "reduce":
-                self.state[sensor] = round(base * fault["factor"], 2)
-            self.fault_duration -= 1
-            if self.fault_duration <= 0:
-                self.active_fault = None
+                target = (cfg["max"] + cfg["crit_high"]) / 2
+            else:  # reduce — push toward (but not past) crit_low / crit_high.
+                # draft is negative: "reduce" magnitude means closer to 0 → use warn band.
+                if cfg["mean"] < 0:
+                    target = (cfg["max"] + cfg["crit_high"]) / 2  # e.g. -1.25
+                else:
+                    target = (cfg["min"] + cfg["crit_low"]) / 2
+            band_width = max(cfg["max"] - cfg["min"], 1e-6)
+            target += random.gauss(0, 1) * band_width * 0.02
+            self.state[sensor] = round(target, 2)
 
         return new_fault
 

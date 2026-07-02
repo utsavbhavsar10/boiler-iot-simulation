@@ -1,8 +1,16 @@
 """
-Tool 4: predict_trend
-Fetches sensor values over a time window, calculates trend,
-and predicts when the sensor will reach a critical threshold.
-This is the "prediction" capability of your agent.
+Tool 4: predict_trend  (Phase 4a — Chronos-powered internals)
+─────────────────────────────────────────────────────────────
+Phase 4a upgrade: internals now powered by Chronos instead of linear regression.
+The function SIGNATURE and RETURN TYPE are UNCHANGED — the ReAct orchestrator
+and Gemini tool schema require zero updates.
+
+Behaviour:
+  1. If chronos_cache has a forecast for the sensor → use it (primary path).
+  2. If cache is empty (first ~30s after startup) → fall back to linear regression
+     (_legacy_predict_trend) so the agent is never blocked during warmup.
+  3. Legacy regression is kept as _legacy_predict_trend and is never deleted
+     until Chronos passes Phase 6 evaluation.
 """
 from influxdb_client import InfluxDBClient
 
@@ -15,28 +23,118 @@ _client    = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
 _query_api = _client.query_api()
 
 
+# ── Primary path: Chronos-powered ──────────────────────────────────────────────
+
 def predict_trend(sensor_name: str, window_minutes: int = 30) -> str:
     """
-    Analyses the trend of a sensor over the last N minutes and predicts
-    whether it will reach a dangerous threshold, and when.
+    Forecasts the trend of a sensor and predicts when it will reach a threshold.
+
+    PRIMARY PATH (Chronos): reads from the background-refreshed chronos_cache.
+    FALLBACK PATH (linear regression): used if cache is empty (first ~30s).
 
     Use this tool when:
-    - A sensor is changing over time and you need to predict future risk
+    - A sensor is changing over time and you need to predict future risk.
     - User asks "will pressure reach critical level?", "how long before fault?"
-    - You want to give a proactive warning before a fault occurs
+    - You want to give a proactive warning before a fault occurs.
+
+    For PROBABILISTIC forecasts (uncertainty, confidence bands, risk ranking
+    across all sensors), prefer get_chronos_forecast instead.
 
     Args:
-        sensor_name:    Name of the sensor (e.g., "pressure", "temperature",
-                        "water_level", "co", "flue_temp")
-        window_minutes: How many minutes of history to analyse (default: 30)
+        sensor_name:    Name of the sensor to analyse.
+        window_minutes: How many minutes of history to use for trend analysis
+                        (only relevant for legacy fallback path).
 
     Returns:
-        String with trend analysis, rate of change, and time-to-threshold prediction.
+        String with trend analysis, forecast values, time-to-threshold
+        prediction, and confidence band (if Chronos powered).
     """
+    # Import lazily to avoid circular imports at module level
+    from assistant.agent.chronos_service import chronos_cache
 
-    # Determine which measurement table to query by looking up the
-    # sensor in SENSOR_MEASUREMENTS (boiler_sensors / turbine_sensors /
-    # chimney_sensors). Defaults to boiler_sensors if unknown.
+    fc = chronos_cache.get(sensor_name)
+
+    # Cache populated but THIS sensor missing → don't silently fall back to
+    # legacy regression (different algorithm, hidden behaviour change).
+    # Cache fully empty → warming up, legacy fallback is appropriate.
+    if fc is None and chronos_cache:
+        available = ", ".join(sorted(chronos_cache.keys()))
+        return (
+            f"No Chronos forecast available for '{sensor_name}'. "
+            f"Sensor may have no recent InfluxDB history this cycle. "
+            f"Available sensors: {available}"
+        )
+
+    if fc is not None:
+        # ── Chronos-powered path ────────────────────────────────────────────
+        unit = SENSOR_UNITS.get(sensor_name, "")
+        label = sensor_name.replace("_", " ").upper()
+        first_val = round(fc.forecast_values[0], 3)
+        last_val  = round(fc.forecast_values[-1], 3)
+
+        # Simple direction inference from start→end of forecast
+        delta = last_val - first_val
+        if delta > first_val * 0.02:
+            trend = "RISING ↑"
+        elif delta < -abs(first_val * 0.02):
+            trend = "FALLING ↓"
+        else:
+            trend = "STABLE →"
+
+        lines = [
+            f"=== TREND ANALYSIS (Chronos-AI): {label} ===",
+            f"Source:                 Chronos-T5 probabilistic forecast",
+            f"Forecast start value:   {first_val} {unit}",
+            f"Forecast end value:     {last_val} {unit}  (in {fc.horizon_seconds // 60} min)",
+            f"Trend direction:        {trend}",
+            f"Rate (start→end):       {round(last_val - first_val, 4):+.4f} {unit} over forecast",
+            f"Confidence band (end):  {round(fc.lower_bound[-1], 3)}–{round(fc.upper_bound[-1], 3)} {unit}",
+            f"Anomaly score:          {fc.anomaly_score:.3f} (0=normal, 1=extreme)",
+        ]
+
+        normal = SENSOR_NORMAL_RANGE.get(sensor_name)
+        if normal:
+            lo, hi = normal
+            lines.append(f"Normal range:           {lo}–{hi} {unit}")
+            in_range = lo <= first_val <= hi
+            lines.append(f"Current status:         {'✅ NORMAL' if in_range else '⚠️ OUT OF RANGE'}")
+
+        if fc.minutes_to_warning is not None:
+            lines.append(
+                f"\n⚠️  PREDICTION: {sensor_name} projected to breach WARNING "
+                f"threshold in {fc.minutes_to_warning:.1f} minutes "
+                f"(step {fc.steps_to_warning} of {len(fc.forecast_values)})."
+            )
+        if fc.minutes_to_critical is not None:
+            lines.append(
+                f"\n🚨 PREDICTION: {sensor_name} projected to breach CRITICAL "
+                f"threshold in {fc.minutes_to_critical:.1f} minutes. "
+                f"Immediate operator attention recommended."
+            )
+        if fc.minutes_to_warning is None and fc.minutes_to_critical is None:
+            lines.append(
+                f"\n✅ PREDICTION: No threshold breach projected within "
+                f"{fc.horizon_seconds // 60} minutes at current trajectory."
+            )
+
+        lines.append(
+            f"\nForecast trajectory (next 10 steps): "
+            f"{[round(v, 2) for v in fc.forecast_values[:10]]}"
+        )
+        return "\n".join(lines)
+
+    # ── Fallback: legacy linear regression ─────────────────────────────────
+    return _legacy_predict_trend(sensor_name, window_minutes)
+
+
+# ── Legacy path: linear regression (kept during ramp, removed after Phase 6 eval) ──
+
+def _legacy_predict_trend(sensor_name: str, window_minutes: int = 30) -> str:
+    """
+    Original linear-regression trend analyser.
+    Used when chronos_cache is empty (~first 30s of startup) as a warmup fallback.
+    Not to be removed until Phase 6 MAPE evaluation confirms Chronos is better.
+    """
     measurement = "boiler_sensors"
     for group, cfg in SENSOR_MEASUREMENTS.items():
         if sensor_name in cfg["sensors"]:
@@ -53,8 +151,8 @@ def predict_trend(sensor_name: str, window_minutes: int = 30) -> str:
     """
 
     try:
-        tables  = _query_api.query(query)
-        points  = []
+        tables = _query_api.query(query)
+        points = []
 
         for table in tables:
             for record in table.records:
@@ -65,36 +163,29 @@ def predict_trend(sensor_name: str, window_minutes: int = 30) -> str:
 
         if len(points) < 3:
             return (
+                f"[FALLBACK — Chronos cache warming up] "
                 f"Insufficient data for trend analysis on '{sensor_name}'. "
                 f"Need at least 3 minutes of data. Only {len(points)} points found."
             )
 
-        # ── Calculate trend (simple linear regression slope) ──────
         n      = len(points)
         values = [p["value"] for p in points]
 
-        # Slope = (n*Σxy - Σx*Σy) / (n*Σx² - (Σx)²)
-        # x = index (time step), y = sensor value
         sum_x  = sum(range(n))
         sum_y  = sum(values)
         sum_xy = sum(i * v for i, v in enumerate(values))
         sum_xx = sum(i * i for i in range(n))
 
         denominator = n * sum_xx - sum_x ** 2
-        if denominator == 0:
-            slope = 0.0
-        else:
-            slope = (n * sum_xy - sum_x * sum_y) / denominator
+        slope = 0.0 if denominator == 0 else (n * sum_xy - sum_x * sum_y) / denominator
 
-        # Slope is per time step (1 minute) → change per minute
         rate_per_minute = round(slope, 4)
+        current_value   = values[-1]
+        unit            = SENSOR_UNITS.get(sensor_name, "")
 
-        current_value = values[-1]
-        unit          = SENSOR_UNITS.get(sensor_name, "")
-
-        # Determine direction and risk
         normal = SENSOR_NORMAL_RANGE.get(sensor_name)
         lines  = [
+            f"[FALLBACK — Chronos cache warming up]",
             f"=== TREND ANALYSIS: {sensor_name.upper()} ===",
             f"Window:          Last {window_minutes} minutes ({n} data points)",
             f"Current value:   {current_value} {unit}",
@@ -105,14 +196,10 @@ def predict_trend(sensor_name: str, window_minutes: int = 30) -> str:
         if normal:
             lo, hi = normal
             lines.append(f"Normal range:    {lo} to {hi} {unit}")
-
-            # Is it currently in range?
             in_range = lo <= current_value <= hi
             lines.append(f"Current status:  {'✅ NORMAL' if in_range else '⚠️ OUT OF RANGE'}")
 
-            # Predict time to threshold
             if rate_per_minute > 0 and current_value < hi:
-                # Rising trend — when will it hit the upper threshold?
                 minutes_to_upper = (hi - current_value) / rate_per_minute
                 if minutes_to_upper <= 60:
                     lines.append(
@@ -128,7 +215,6 @@ def predict_trend(sensor_name: str, window_minutes: int = 30) -> str:
                     )
 
             elif rate_per_minute < 0 and current_value > lo:
-                # Falling trend — when will it hit the lower threshold?
                 minutes_to_lower = (current_value - lo) / abs(rate_per_minute)
                 if minutes_to_lower <= 60:
                     lines.append(

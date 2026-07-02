@@ -21,12 +21,59 @@ import warnings
 warnings.filterwarnings("ignore", message=".*ChatVertexAI.*")
 warnings.filterwarnings("ignore", message=".*deprecated.*", module="vertexai.*")
 
+import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 from ragas import evaluate
+from ragas.run_config import RunConfig
 from ragas.metrics import faithfulness, answer_relevancy
 from datasets import Dataset
 
 from langchain_google_vertexai import ChatVertexAI
 from langchain_openai import OpenAIEmbeddings
+
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    pass
+
+
+# Dedicated single-thread executor + persistent asyncio loop.
+# RAGAS spins async tasks internally; ChatVertexAI's gRPC channel binds to
+# the first loop it sees. Pinning every evaluate() call to one thread with
+# one long-lived loop prevents "Event loop is closed" / "_interceptors_task"
+# errors on the 2nd+ question.
+_eval_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ragas-eval")
+_eval_loop: asyncio.AbstractEventLoop | None = None
+_loop_lock = threading.Lock()
+
+
+def _ensure_loop():
+    global _eval_loop
+    with _loop_lock:
+        if _eval_loop is None or _eval_loop.is_closed():
+            _eval_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_eval_loop)
+            try:
+                nest_asyncio.apply(_eval_loop)
+            except Exception:
+                pass
+    return _eval_loop
+
+
+def _run_ragas(dataset, metrics, llm, embeddings):
+    """Runs in dedicated worker thread. Reuses one persistent event loop."""
+    _ensure_loop()
+    return evaluate(
+        dataset=dataset,
+        metrics=metrics,
+        llm=llm,
+        embeddings=embeddings,
+        raise_exceptions=False,
+        run_config=RunConfig(max_workers=1, timeout=180),
+    )
 
 from influxdb_client import InfluxDBClient , Point
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -67,7 +114,15 @@ EXPECTED_TOOLS_MAP = {
         "falling", "how long", "when will", "future", "increase",
         "get worse", "before it reaches",
     ],
+    # Phase 6 — Chronos probabilistic intent keywords
+    "get_chronos_forecast": [
+        "will there be a fault", "about to fail", "is anything about to",
+        "risk in the next", "probability", "anomaly", "unusual",
+        "confidence", "forecast all", "scan all sensors", "how long until",
+        "overheat", "breach in", "minutes until", "upcoming fault",
+    ],
 }
+
 
 def get_expected_tools(question: str) -> list:
     """"
@@ -123,7 +178,7 @@ class BoilerEvaluator:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             self.judge = ChatVertexAI(
-                model_name="gemini-2.5-flash",  # base Gemini judge via Vertex AI
+                model_name="gemini-2.5-pro",  # Pro judge — better paraphrase support recognition
                 project=GCP_PROJECT_ID,
                 location=GCP_REGION,
                 temperature=0,    # deterministic evaluation
@@ -141,10 +196,11 @@ class BoilerEvaluator:
     def evaluate_answer(
             self, question:str , # user original question
             answer:str ,# chatbot response
-            contexts:str ,# retrieved knowledge + tool outputs used to generate the answer
+            contexts:list ,# retrieved knowledge + tool outputs used to generate the answer
             latency_ms:float ,# how long the agent took to respond
             steps_taken:int ,# how many tool calls the agent made
             tools_called:list, # which tools the agent called
+            had_tool_call:bool = True, # was a tool actually called for this question
         ) -> dict:
 
         """
@@ -177,47 +233,55 @@ class BoilerEvaluator:
             "contexts": [contexts],   # list of strings, wrapped in outer list
         }) 
 
-        faithfulness_score = 0.0
-        relevancy_score    = 0.0
+        faithfulness_score = None
+        relevancy_score    = None
+        eval_status        = "ok"
 
         try:
-            result = evaluate(
-                dataset = eval_dataset,
-                metrics = [faithfulness, answer_relevancy],
-                llm     = self.judge,
-                embeddings = self.embeddings,
-                raise_exceptions = False 
+            future = _eval_executor.submit(
+                _run_ragas,
+                eval_dataset,
+                [faithfulness, answer_relevancy],
+                self.judge,
+                self.embeddings,
             )
+            result = future.result(timeout=240)
             df = result.to_pandas()  #Per row: question, answer, contexts, faithfulness, answer_relevancy
 
-            # Extract scores safely (they could be NaN if evaluation failed)
             raw_faith  = df["faithfulness"].iloc[0]
             raw_relev  = df["answer_relevancy"].iloc[0]
 
-            faithfulness_score = round(float(raw_faith)  if raw_faith  == raw_faith  else 0.0, 3)
-            relevancy_score    = round(float(raw_relev)  if raw_relev  == raw_relev  else 0.0, 3)
+            # NaN check (NaN != NaN). NaN → None (skip field), not 0.0.
+            faithfulness_score = None if raw_faith != raw_faith else round(float(raw_faith), 3)
+            relevancy_score    = None if raw_relev != raw_relev else round(float(raw_relev), 3)
+
+            if faithfulness_score is None and relevancy_score is None:
+                eval_status = "nan"
+
             print(f"   faithfulness:     {faithfulness_score}")
             print(f"   answer_relevancy: {relevancy_score}")
-       
+
         except Exception as e:
             print(f"   ⚠️  RAGAS evaluation error: {e}")
-            print(f"   Using default scores (0.0) for this query")
+            eval_status = "failed"
 
         # ── Metric 3: Tool Precision ──────────────────────────────────────
         tool_precision = calculate_tool_precision(tools_called, question)
         print(f"   tool_precision:   {tool_precision}")
 
-        # Overall quality 
-        # Faithfulness and relevancy are most
-        # Important (0.4 each)
-        # Tool precision is also important (0.2)
-        overall_quality = round(
-            (faithfulness_score * 0.4) + #Heuristic  weights
-            (relevancy_score    * 0.4) +
-            (tool_precision     * 0.2),
-            3
-        )
+        # Overall quality — only computable when both RAGAS metrics succeeded.
+        if faithfulness_score is not None and relevancy_score is not None:
+            overall_quality = round(
+                (faithfulness_score * 0.4) +
+                (relevancy_score    * 0.4) +
+                (tool_precision     * 0.2),
+                3
+            )
+        else:
+            overall_quality = None
+
         print(f"   overall_quality:  {overall_quality}")
+        print(f"   eval_status:      {eval_status}")
         print(f"   latency_ms:       {latency_ms}")
         print(f"   steps_taken:      {steps_taken}")
 
@@ -229,7 +293,9 @@ class BoilerEvaluator:
             "overall_quality":   overall_quality,
             "latency_ms":        latency_ms,
             "steps_taken":       steps_taken,
-            "tools_used":        ",".join(tools_called),
+            "tools_used":        ",".join(tools_called) if tools_called else "none",
+            "eval_status":       eval_status,
+            "had_tool_call":     had_tool_call,
             "timestamp":         datetime.now(UTC),
         }
 
@@ -242,27 +308,37 @@ class BoilerEvaluator:
         """
         Write evaluation scores to InfluxDB measurement: chatbot_evaluation
         These are automatically visible in Grafana.
+
+        NaN/None metric values are SKIPPED, not written as 0.0 — so dashboards
+        reflect real failures vs real low scores. Use the `eval_status` tag
+        to filter ok vs nan vs failed rows.
         """
         try:
             point = (
                 Point("chatbot_evaluation")
                 # Tags (indexed, used for filtering in Grafana)
                 .tag("question_preview", question[:60])
+                .tag("eval_status",      scores.get("eval_status", "ok"))
+                .tag("had_tool_call",    "true" if scores.get("had_tool_call") else "false")
+            )
 
-                # Fields (the actual numbers)
-                .field("faithfulness",     scores["faithfulness"])
-                .field("answer_relevancy", scores["answer_relevancy"])
-                .field("tool_precision",   scores["tool_precision"])
-                .field("overall_quality",  scores["overall_quality"])
-                .field("latency_ms",       scores["latency_ms"])
-                .field("steps_taken",      float(scores["steps_taken"]))
-                .field("tools_used",       scores["tools_used"])
+            # Only write metric fields that successfully evaluated.
+            for key in ("faithfulness", "answer_relevancy", "tool_precision", "overall_quality"):
+                val = scores.get(key)
+                if val is not None:
+                    point = point.field(key, float(val))
 
+            # Always-present operational fields.
+            point = (
+                point
+                .field("latency_ms",  float(scores["latency_ms"]))
+                .field("steps_taken", float(scores["steps_taken"]))
+                .field("tools_used",  scores["tools_used"])
                 .time(scores["timestamp"])
             )
 
             _write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=point)
-            print(f"   ✅ Scores logged to InfluxDB")
+            print(f"   ✅ Scores logged to InfluxDB (status={scores.get('eval_status')})")
 
         except Exception as e:
             # Evaluation logging failure should never crash the API

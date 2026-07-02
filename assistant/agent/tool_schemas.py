@@ -148,11 +148,57 @@ predict_trend_schema = FunctionDeclaration(
 )
 
 # ── Bundle all tools ────────────────────────────────────────────────────
+# Tool 5 — Phase 4d
+get_chronos_forecast_schema = FunctionDeclaration(
+    name="get_chronos_forecast",
+    description=(
+        "Returns a PROBABILISTIC time-series forecast from the Chronos-T5 AI model "
+        "for one specific sensor or for ALL sensors at once. "
+        "Includes: point forecast values, 10th/90th percentile confidence bands, "
+        "minutes-to-warning-threshold, minutes-to-critical-threshold, and anomaly score. "
+        "The cache is refreshed every 30 seconds in the background — this tool reads "
+        "from the cache instantly with no inference delay. "
+        "USE THIS TOOL when: "
+        "(1) User asks PREDICTIVE questions implying uncertainty or risk: "
+        "'Will there be a fault?', 'How long until overheat?', 'Is anything about to fail?', "
+        "'What is the risk in the next 30 minutes?', 'Scan all sensors for upcoming problems'. "
+        "(2) You need confidence bands — not just a point estimate. "
+        "(3) User asks about anomaly detection: 'Is anything statistically unusual?'. "
+        "(4) Multi-sensor risk ranking: use sensor_name='all'. "
+        "PREFER predict_trend for simple single-sensor rising/falling direction questions. "
+        "PREFER get_chronos_forecast for multi-sensor risk scan or uncertainty questions."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "sensor_name": {
+                "type": "string",
+                "description": (
+                    "Sensor name to forecast, OR 'all' to scan every sensor at once. "
+                    "Boiler: 'main_steam_flow', 'main_steam_temp_boiler', "
+                    "'main_steam_pressure_boiler', 'reheat_steam_temp_boiler', "
+                    "'superheater_desup_flow', 'reheater_desup_flow', "
+                    "'feedwater_temp', 'feedwater_flow', 'feedwater_pressure', "
+                    "'flue_gas_temp', 'oxygen_level'. "
+                    "Turbine: 'main_steam_temp_turbine', 'main_steam_pressure_turbine', "
+                    "'reheat_steam_temp_turbine', 'reheat_steam_pressure_turbine', "
+                    "'control_stage_pressure', 'high_exhaust_pressure', "
+                    "'condenser_vacuum', 'circ_water_outlet_temp'. "
+                    "Chimney: 'flue_temp', 'co2', 'o2', 'co', 'draft', 'stack_velocity'. "
+                    "Use 'all' when user asks about the whole system or multi-sensor risk."
+                ),
+            },
+        },
+        "required": [],
+    },
+)
+
 BOILER_AGENT_TOOLS = Tool(
     function_declarations=[
         fetch_realtime_sensors_schema,
         search_knowledge_base_schema,
         get_fault_history_schema,
         predict_trend_schema,
+        get_chronos_forecast_schema,   # Phase 4d
     ]
-)
+)

@@ -1,0 +1,22 @@
+# ══════════════════════════════════════════════════════════════════════
+# Grafana Datasource Provisioning
+# Automatically connects Grafana to the InfluxDB boiler_data bucket
+# on startup — no manual UI configuration needed.
+# ══════════════════════════════════════════════════════════════════════
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB — Boiler Historian
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    uid: boiler-influx-ds
+    isDefault: true
+    editable: true
+    jsonData:
+      version: Flux                # Use Flux query language (InfluxDB 2.x)
+      organization: boiler_org
+      defaultBucket: boiler_data
+      tlsSkipVerify: true
+    secureJsonData:
+      token: my-super-secret-token-123

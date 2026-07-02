@@ -1,49 +1,267 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Boiler IoT Simulation — Full Stack Docker Compose
+#
+# Start everything with a single command:
+#   docker compose up --build
+#
+# Services:
+#   Infrastructure  → emqx (MQTT broker), influxdb, redis, grafana
+#   Publishers      → boiler-simulator, chimney-simulator
+#   Consumers       → influx-consumer, fault-detector
+#   Application     → backend (FastAPI + Chronos AI), frontend (Next.js)
+#
+# Startup order is enforced via depends_on + healthchecks so the backend
+# never starts before its databases are ready.
+# ══════════════════════════════════════════════════════════════════════════════
+
+x-python-env: &python-env
+  # ── InfluxDB ──────────────────────────────────────────────────────────────
+  INFLUX_URL: http://influxdb:8086
+  INFLUX_TOKEN: my-super-secret-token-123
+  INFLUX_ORG: boiler_org
+  INFLUX_BUCKET: boiler_data
+  # ── MQTT ──────────────────────────────────────────────────────────────────
+  MQTT_HOST: emqx
+  MQTT_PORT: "1883"
+  # ── FastAPI ───────────────────────────────────────────────────────────────
+  FASTAPI_URL: http://backend:8000
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  REDIS_URL: redis://redis:6379/0
+  REDIS_TLS: "false"
+  CHAT_HISTORY_MAX_TURNS: "20"
+  CHAT_HISTORY_TTL_SECONDS: "86400"
+  CHAT_SUMMARY_THRESHOLD: "20"
+  # ── Chronos ───────────────────────────────────────────────────────────────
+  CHRONOS_MODEL: amazon/chronos-t5-small
+  CHRONOS_DEVICE: cpu
+  CHRONOS_REFRESH_INTERVAL: "30"
+  CHRONOS_PREDICTION_LENGTH: "20"
+  CHRONOS_STEP_INTERVAL: "10"
+  CHRONOS_HISTORY_MINUTES: "20"
+  # ── ChromaDB ──────────────────────────────────────────────────────────────
+  CHROMA_PATH: /app/chroma_db
+
+x-python-build: &python-build
+  context: .
+  dockerfile: Dockerfile
+
 services:
+  # ════════════════════════════════════════════════════════════════════════════
+  # INFRASTRUCTURE
+  # ════════════════════════════════════════════════════════════════════════════
+
   emqx:
-    image: emqx/emqx:latest #which prebuilt image to download
+    image: emqx/emqx:5.8
     container_name: emqx_broker
     ports:
-      - "1883:1883"   #MQTT(Python scripts use this port to connect to the broker)
-      - "8083:8083"   # MQTT over WebSocket (browsers)
-      - "18083:18083" # EMQX's own admin web UI
+      - "1883:1883"    # MQTT (Python clients)
+      - "8083:8083"    # MQTT over WebSocket (browsers)
+      - "18083:18083"  # EMQX admin UI → http://localhost:18083  (admin/public)
     environment:
-      - EMQX_ALLOW_ANONYMOUS=true # no username/password in dev
+      - EMQX_ALLOW_ANONYMOUS=true
     volumes:
-      - emqx_data:/opt/emqx/data # persist data across restarts
+      - emqx_data:/opt/emqx/data
+    healthcheck:
+      test: ["CMD", "emqx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   influxdb:
     image: influxdb:2.7
     container_name: influxdb
     ports:
-      - "8086:8086" # InfluxDB API
+      - "8086:8086"
     environment:
-      - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
-      - DOCKER_INFLUXDB_INIT_ORG=boiler_org
-      - DOCKER_INFLUXDB_INIT_BUCKET=boiler_data
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-token-123
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: admin123
+      DOCKER_INFLUXDB_INIT_ORG: boiler_org
+      DOCKER_INFLUXDB_INIT_BUCKET: boiler_data
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: my-super-secret-token-123
     volumes:
-      - influxdb_data:/var/lib/influxdb2 # persist data across restarts
+      - influxdb_data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: boiler-redis
+    ports:
+      - "6379:6379"
+    command:
+      - redis-server
+      - --appendonly yes
+      - --maxmemory 64mb
+      - --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
     ports:
-      - "3000:3000" # Grafana web UI
+      - "4000:3000"   # Grafana UI → http://localhost:4000  (admin/admin123)
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+      # Allow Grafana to load unsigned plugins if needed
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: ""
+      # Disable branding
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
     volumes:
       - grafana_data:/var/lib/grafana
+      # ── Auto-provisioning ────────────────────────────────────────────────
+      # These mounts tell Grafana to configure itself on first boot:
+      #   datasources/influxdb.yaml  → connects to the InfluxDB container
+      #   dashboards/provider.yaml   → watches /dashboards dir for .json files
+      #   dashboards/*.json          → loads the Boiler Historian dashboard
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
-      - influxdb
+      influxdb:
+        condition: service_healthy
     restart: unless-stopped
 
+  # ════════════════════════════════════════════════════════════════════════════
+  # PYTHON PUBLISHERS — generate sensor data via MQTT
+  # ════════════════════════════════════════════════════════════════════════════
+
+  boiler-simulator:
+    build:
+      <<: *python-build
+      target: boiler-simulator
+    container_name: boiler_simulator
+    environment:
+      <<: *python-env
+      # Override hardcoded localhost with Docker service names
+      BROKER_HOST: emqx
+    depends_on:
+      emqx:
+        condition: service_healthy
+    restart: unless-stopped
+
+  chimney-simulator:
+    build:
+      <<: *python-build
+      target: chimney-simulator
+    container_name: chimney_simulator
+    environment:
+      <<: *python-env
+      BROKER_HOST: emqx
+    depends_on:
+      emqx:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # PYTHON CONSUMERS — process MQTT messages, write to InfluxDB
+  # ════════════════════════════════════════════════════════════════════════════
+
+  influx-consumer:
+    build:
+      <<: *python-build
+      target: influx-consumer
+    container_name: influx_consumer
+    environment:
+      <<: *python-env
+      MQTT_HOST: emqx
+    depends_on:
+      emqx:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  fault-detector:
+    build:
+      <<: *python-build
+      target: fault-detector
+    container_name: fault_detector
+    environment:
+      <<: *python-env
+      MQTT_HOST: emqx
+    depends_on:
+      emqx:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # FASTAPI BACKEND — Chronos AI + chatbot + REST + WebSocket
+  # ════════════════════════════════════════════════════════════════════════════
+
+  backend:
+    build:
+      <<: *python-build
+      target: backend
+    container_name: boiler_backend
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *python-env
+      # GCP / Vertex AI — copy from your .env file or set as Docker secrets
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_REGION: ${GCP_REGION:-us-central1}
+      TUNED_MODEL_ENDPOINT_v4: ${TUNED_MODEL_ENDPOINT_v4:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      # Persist ChromaDB knowledge base across restarts
+      - chroma_data:/app/chroma_db
+    depends_on:
+      emqx:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s    # Chronos model load takes ~30s on first boot
+    restart: unless-stopped
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # NEXT.JS FRONTEND — Dashboard + Chatbot UI
+  # ════════════════════════════════════════════════════════════════════════════
+
+  frontend:
+    build:
+      <<: *python-build
+      context: .
+      dockerfile: Dockerfile
+      target: frontend
+    container_name: boiler_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # Points the browser-side API calls to the backend container
+      NEXT_PUBLIC_API_BASE: http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VOLUMES — all data persists across docker compose down / up
+# ══════════════════════════════════════════════════════════════════════════════
 volumes:
   emqx_data:
   influxdb_data:
+  redis_data:
   grafana_data:
-
+  chroma_data:

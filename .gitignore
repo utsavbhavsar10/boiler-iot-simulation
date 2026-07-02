@@ -1,4 +1,4 @@
-# Python-generated files
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[oc]
 build/
@@ -6,7 +6,42 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
-.venv
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
 
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.local.example
 
+# ── AI assistant config (may contain API keys) ────────────────────────────────
+.claude/
+
+# ── Node / Next.js ────────────────────────────────────────────────────────────
+node_modules/
+Frontend/node_modules/
+Frontend/.next/
+Frontend/out/
+Frontend/.env.local
+*.tsbuildinfo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+# (keep Dockerfile and docker-compose.yml tracked)
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Large data / model files ──────────────────────────────────────────────────
+*.pack
+*.bin
+clean_data.csv

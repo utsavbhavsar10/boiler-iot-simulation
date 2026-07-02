@@ -26,12 +26,13 @@ FINE_TUNED_MODEL_ENDPOINT = os.getenv("TUNED_MODEL_ENDPOINT_v4")
 
 #Model generation settings
 GEMINI_TEMPERATURE=0.1  #low = factual ans , not creative
-GEMINI_MAX_TOKENS=8192  # thinking tokens + full structured answer need room
+GEMINI_MAX_TOKENS=24576  # thinking tokens + full structured answer need room
 GEMINI_TOP_P=0.8
-GEMINI_THINKING_BUDGET=2048  # cap reasoning so the written answer always has room
+GEMINI_THINKING_BUDGET=2048  # NOTE: vertexai SDK GenerationConfig does not expose
+                             # thinking_config; kept for future google-genai migration.
 
 #Agent Settings
-MAX_AGENT_STEPS=6   #max tool calls 
+MAX_AGENT_STEPS=10   #max tool calls
 
 # ── InfluxDB ───────────────────────────────────────────────────────────
 INFLUX_URL = os.getenv("INFLUX_URL", "http://localhost:8086")
@@ -220,3 +221,31 @@ FAULT_CATALOG = {
     "LOW_DRAFT":                {"sensor": "draft",     "severity": "WARNING"},
     "HIGH_FLUE_TEMP":           {"sensor": "flue_temp", "severity": "WARNING"},
 }
+
+# ── Chronos Forecasting Configuration ─────────────────────────────────────────
+# All read from environment variables with sensible defaults.
+# Set in .env for local dev; set as container env vars for production.
+
+CHRONOS_MODEL           = os.getenv("CHRONOS_MODEL",           "amazon/chronos-t5-small")
+CHRONOS_DEVICE          = os.getenv("CHRONOS_DEVICE",          "cpu")
+CHRONOS_REFRESH_INTERVAL = int(os.getenv("CHRONOS_REFRESH_INTERVAL", "15"))   # seconds — reduced from 30 to stay fresh during degradation
+CHRONOS_PREDICTION_LENGTH = int(os.getenv("CHRONOS_PREDICTION_LENGTH", "20"))  # steps ahead
+CHRONOS_STEP_INTERVAL   = int(os.getenv("CHRONOS_STEP_INTERVAL",   "10"))     # seconds per MQTT reading
+CHRONOS_HISTORY_MINUTES = int(os.getenv("CHRONOS_HISTORY_MINUTES", "20"))     # how far back to pull from InfluxDB
+
+# All sensor names across all measurement groups — used by Chronos service
+# to iterate forecasts without coupling to SENSOR_MEASUREMENTS structure.
+ALL_SENSOR_NAMES: list[str] = [
+    sensor
+    for cfg in SENSOR_MEASUREMENTS.values()
+    for sensor in cfg["sensors"]
+]
+
+# ── Redis Chat History Cache ────────────────────────────────────────────────────
+# Free tier: Upstash (prod) or local Docker Redis (dev).
+# Set REDIS_URL in .env — defaults to local Docker Redis.
+REDIS_URL                = os.getenv("REDIS_URL",                "redis://localhost:6379/0")
+REDIS_TLS                = os.getenv("REDIS_TLS",                "false").lower() == "true"
+CHAT_HISTORY_MAX_TURNS   = int(os.getenv("CHAT_HISTORY_MAX_TURNS",   "20"))
+CHAT_HISTORY_TTL_SECONDS = int(os.getenv("CHAT_HISTORY_TTL_SECONDS", "86400"))  # 24h
+CHAT_SUMMARY_THRESHOLD   = int(os.getenv("CHAT_SUMMARY_THRESHOLD",   "20"))

@@ -1,0 +1,53 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Git
+.git/
+.gitignore
+
+# Node (handled in frontend stage)
+Frontend/node_modules/
+Frontend/.next/
+
+# Docker files (no need to copy into image)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Large test / docs files
+*.pdf
+*.csv
+boiler_data.csv
+clean_data.csv
+query.csv
+uv.lock
+
+# ChromaDB persistent store (mounted as volume)
+chroma_db/
+
+# Logs
+*.log
+logs/
+
+# Test files
+test_*.py
+*.test.py

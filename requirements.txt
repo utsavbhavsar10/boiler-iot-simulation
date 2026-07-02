@@ -15,4 +15,14 @@ uvicorn
 pydantic
 requests
 ragas
+nest_asyncio
 langchain-openai
+chronos-forecasting
+torch
+pandas
+numpy
+# ── New dependencies (POC standard) ────────────────────────────────────────────
+redis>=5.0.0               # Chat history cache (Upstash free tier / local Docker)
+rank-bm25>=0.2.2           # BM25 keyword search for hybrid retrieval
+sentence-transformers>=2.7.0  # Cross-encoder reranker for hybrid retrieval
+matplotlib>=3.8.0          # Chronos evaluation result plots
